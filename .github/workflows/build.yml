@@ -1,10 +1,14 @@
-name: Build
+name: Build Tabdeal Dashboard
 
 on:
   push:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   build:
@@ -12,12 +16,17 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
         with:
-          node-version: 22
-          cache: npm
+          bun-version: latest
       - name: Install dependencies
-        run: npm install
+        run: bun install --frozen-lockfile
       - name: Build
-        run: npm run build
+        run: bun run build
+      - name: Upload build output
+        uses: actions/upload-artifact@v4
+        with:
+          name: tabdeal-dashboard-build
+          path: .output
+          if-no-files-found: error
