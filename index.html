@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>داشبورد بازار تبدیل</title>
+<style>
+:root{color-scheme:dark;font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#080b12;color:#edf2f7}*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at top,#121a2b 0,#080b12 45%);min-height:100vh}.wrap{max-width:1250px;margin:auto;padding:28px 18px}.top{display:flex;gap:16px;align-items:center;justify-content:space-between;flex-wrap:wrap}.brand h1{margin:0;font-size:28px}.brand p{margin:7px 0 0;color:#8d9ab0}.actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap}button,input,select{font:inherit}button{border:1px solid #283349;background:#111827;color:#eef2f7;border-radius:10px;padding:10px 14px;cursor:pointer}button:hover{background:#182237}.search{background:#0e1420;border:1px solid #283349;color:#fff;border-radius:10px;padding:11px 14px;min-width:250px;outline:none}.cards{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:24px 0}.card{background:#0d131f;border:1px solid #202b3e;border-radius:14px;padding:16px}.label{color:#8995a8;font-size:13px}.value{font-size:22px;font-weight:700;margin-top:8px}.toolbar{display:flex;justify-content:space-between;gap:12px;align-items:center;margin:14px 0;flex-wrap:wrap}.tabs{display:flex;gap:8px}.tab.active{background:#24314a;border-color:#3c4e70}.status{color:#8995a8;font-size:13px}.tablebox{overflow:auto;border:1px solid #202b3e;border-radius:14px;background:#0b1019}table{width:100%;border-collapse:collapse;min-width:900px}th,td{padding:14px 12px;border-bottom:1px solid #1b2535;text-align:right;white-space:nowrap}th{color:#8e9aaf;font-size:12px;font-weight:600;background:#0d1420;position:sticky;top:0}tr:hover td{background:#101827}.coin{font-weight:700}.muted{color:#8995a8}.up{color:#41d18b}.down{color:#ff6b7a}.err{margin:18px 0;padding:14px;border:1px solid #63303a;background:#25151b;color:#ffb4be;border-radius:10px;display:none}.empty{padding:50px;text-align:center;color:#8d99ad}.footer{padding:18px 0;color:#657287;font-size:12px;text-align:center}@media(max-width:800px){.cards{grid-template-columns:repeat(2,1fr)}.search{min-width:180px;width:100%}.actions{width:100%}}@media(max-width:500px){.cards{grid-template-columns:1fr}.wrap{padding:20px 12px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header class="top"><div class="brand"><h1>داشبورد بازار تبدیل</h1><p>نمایش بازارهای فعال با داده عمومی صرافی</p></div><div class="actions"><input id="search" class="search" placeholder="جستجوی ارز یا بازار…"><button id="refresh">↻ بروزرسانی</button></div></header>
+<div id="error" class="err"></div>
+<section class="cards"><div class="card"><div class="label">تعداد بازارها</div><div id="count" class="value">—</div></div><div class="card"><div class="label">بازارهای تتر</div><div id="usdt" class="value">—</div></div><div class="card"><div class="label">بیشترین رشد</div><div id="gainer" class="value">—</div></div><div class="card"><div class="label">بیشترین افت</div><div id="loser" class="value">—</div></div></section>
+<div class="toolbar"><div class="tabs"><button class="tab active" data-q="all">همه</button><button class="tab" data-q="USDT">تتر</button><button class="tab" data-q="IRT">تومان</button></div><div id="status" class="status">در حال دریافت بازارها…</div></div>
+<div class="tablebox"><table><thead><tr><th>بازار</th><th>قیمت</th><th>تغییر ۲۴ساعت</th><th>بیشترین</th><th>کمترین</th><th>حجم</th><th>وضعیت</th></tr></thead><tbody id="rows"><tr><td colspan="7" class="empty">در حال بارگذاری…</td></tr></tbody></table></div>
+<div class="footer">داده‌ها از API عمومی تبدیل دریافت می‌شوند. این صفحه هیچ کلید خصوصی یا اطلاعات حساب کاربری نمی‌خواهد.</div>
+</div>
+<script>
+const API='https://api1.tabdeal.org';
+let markets=[], filter='all';
+const $=id=>document.getElementById(id);
+function n(v){return Number.isFinite(Number(v))?Number(v):null}
+function fmt(v){if(v==null)return '—';const x=Math.abs(v);return x>=1000?v.toLocaleString('en-US',{maximumFractionDigits:2}):v.toLocaleString('en-US',{maximumSignificantDigits:8})}
+function pct(v){return v==null?'—':(v>0?'+':'')+v.toFixed(2)+'%'}
+function showError(msg){$('error').textContent=msg;$('error').style.display=msg?'block':'none'}
+async function getJson(path){const r=await fetch(API+path,{headers:{Accept:'application/json'}});if(!r.ok)throw new Error('API '+r.status);return r.json()}
+async function load(){
+ $('status').textContent='در حال دریافت بازارها…';showError('');$('rows').innerHTML='<tr><td colspan="7" class="empty">در حال بارگذاری…</td></tr>';
+ try{
+  let raw=await getJson('/r/api/v1/exchangeInfo');
+  let rows=Array.isArray(raw)?raw:(raw.data||raw.symbols||[]);
+  markets=rows.filter(x=>!x.status||x.status==='TRADING').map(x=>({symbol:x.symbol||'',tabdealSymbol:x.tabdealSymbol||x.symbol||'',base:x.baseAsset||String(x.symbol||'').split('_')[0],quote:x.quoteAsset||String(x.symbol||'').split('_').slice(1).join('_')}));
+  $('count').textContent=markets.length.toLocaleString('en-US');$('usdt').textContent=markets.filter(x=>x.quote.toUpperCase()==='USDT').length.toLocaleString('en-US');
+  $('status').textContent='بازارها دریافت شد؛ برای قیمت‌ها تلاش می‌کنیم…';
+  await loadStats();
+ }catch(e){showError('دریافت اطلاعات بازار ناموفق بود. اگر API در مرورگر CORS را مسدود کند، نسخه سروری پروژه Lovable را اجرا کنید. خطا: '+e.message);$('status').textContent='خطا در دریافت داده';$('rows').innerHTML='<tr><td colspan="7" class="empty">داده‌ای دریافت نشد</td></tr>'}
+}
+async function loadStats(){
+ const now=Math.floor(Date.now()/1000), from=now-86400;
+ const selected=markets.slice(0,120);
+ const out=[];let done=0;
+ for(let i=0;i<selected.length;i+=8){
+  const batch=selected.slice(i,i+8);
+  const got=await Promise.all(batch.map(async m=>{try{const q=`symbol=${encodeURIComponent(m.tabdealSymbol)}&resolution=60&from=${from}&to=${now}`;const raw=await getJson('/r/plots/history/?'+q);const c=Array.isArray(raw?.data)?raw.data:[];if(!c.length)return {...m,price:null,change:null,high:null,low:null,volume:null};const norm=c.map(x=>Array.isArray(x)?{o:n(x[1]),h:n(x[2]),l:n(x[3]),c:n(x[4]),v:n(x[5])}:{o:n(x.open),h:n(x.high),l:n(x.low),c:n(x.close),v:n(x.volume)}).filter(x=>x.c!=null);if(!norm.length)return {...m,price:null,change:null,high:null,low:null,volume:null};const first=norm[0],last=norm[norm.length-1];return {...m,price:last.c,change:first.o?((last.c-first.o)/first.o)*100:null,high:Math.max(...norm.map(x=>x.h??x.c)),low:Math.min(...norm.map(x=>x.l??x.c)),volume:norm.reduce((s,x)=>s+(x.v||0),0)}}catch{return {...m,price:null,change:null,high:null,low:null,volume:null}}}));
+  out.push(...got);done+=batch.length;$('status').textContent=`قیمت‌ها: ${Math.min(done,selected.length)} از ${selected.length}`;render(out);await new Promise(r=>setTimeout(r,30));
+ }
+ markets=out.concat(markets.slice(selected.length));render(markets);$('status').textContent=`آخرین بروزرسانی: ${new Date().toLocaleTimeString('fa-IR')}`;
+}
+function render(data){const q=filter.toUpperCase(),s=$('search').value.trim().toUpperCase();let rows=data.filter(m=>(q==='ALL'||m.quote.toUpperCase()===q)&&(!s||(m.base+' '+m.quote+' '+m.symbol).toUpperCase().includes(s)));const valid=rows.filter(x=>x.change!=null);if(valid.length){const g=valid.reduce((a,b)=>b.change>a.change?b:a),l=valid.reduce((a,b)=>b.change<a.change?b:a);$('gainer').textContent=g.base+' '+pct(g.change);$('loser').textContent=l.base+' '+pct(l.change)}else{$('gainer').textContent='—';$('loser').textContent='—'}$('rows').innerHTML=rows.length?rows.map(m=>`<tr><td class="coin">${m.base}/${m.quote}</td><td>${fmt(m.price)}</td><td class="${m.change>0?'up':m.change<0?'down':''}">${pct(m.change)}</td><td>${fmt(m.high)}</td><td>${fmt(m.low)}</td><td>${fmt(m.volume)}</td><td class="muted">${m.price==null?'بدون قیمت':'فعال'}</td></tr>`).join(''):'<tr><td colspan="7" class="empty">بازاری مطابق فیلتر پیدا نشد</td></tr>';$('count').textContent=data.length.toLocaleString('en-US');$('usdt').textContent=data.filter(x=>x.quote.toUpperCase()==='USDT').length.toLocaleString('en-US')}
+$('search').addEventListener('input',()=>render(markets));$('refresh').addEventListener('click',load);document.querySelectorAll('.tab').forEach(b=>b.addEventListener('click',()=>{document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));b.classList.add('active');filter=b.dataset.q;render(markets)}));load();setInterval(load,120000);
+</script>
+</body></html>
