@@ -1,14 +1,12 @@
 /**
  * Tabdeal exchange public market data access (server-only).
- *
- * Verified public endpoints:
- *  - GET /r/api/v1/exchangeInfo/            → all markets
- *  - GET /r/plots/history/?symbol=BTC_USDT&resolution=60&from=&to=  → candles
- *  - GET /r/api/v1/depth/?tabdealSymbol=BTC_USDT  → order book
- *  - GET /r/api/v1/trades/?symbol=BTCUSDT   → recent trades
  */
 
-const BASE = "https://api.tabdeal.ir";
+// Current public REST host, with the legacy host retained as a fallback.
+const BASES = [
+  "https://api1.tabdeal.org",
+  "https://api.tabdeal.ir",
+] as const;
 const UA = "Mozilla/5.0 (compatible; TabdealMarketDashboard/1.0)";
 
 export type MarketInfo = {
@@ -38,31 +36,54 @@ export type MarketStat = MarketInfo & {
 };
 
 async function apiJson<T>(path: string): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
-    headers: { "User-Agent": UA, Accept: "application/json" },
-  });
-  if (!res.ok) throw new Error(`Tabdeal ${path} → ${res.status}`);
-  return (await res.json()) as T;
+  let lastError: unknown;
+
+  for (const base of BASES) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 12_000);
+    try {
+      const res = await fetch(`${base}${path}`, {
+        headers: { "User-Agent": UA, Accept: "application/json" },
+        signal: controller.signal,
+      });
+      if (!res.ok) {
+        lastError = new Error(`Tabdeal ${base}${path} → ${res.status}`);
+        continue;
+      }
+      return (await res.json()) as T;
+    } catch (error) {
+      lastError = error;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  throw lastError instanceof Error
+    ? lastError
+    : new Error(`Unable to reach Tabdeal API: ${path}`);
 }
 
 let marketsCache: { at: number; data: MarketInfo[] } | null = null;
+
+type RawMarket = {
+  symbol: string;
+  tabdealSymbol: string;
+  status: string;
+  baseAsset: string;
+  quoteAsset: string;
+};
 
 export async function getMarkets(): Promise<MarketInfo[]> {
   if (marketsCache && Date.now() - marketsCache.at < 10 * 60_000) {
     return marketsCache.data;
   }
-  const raw = await apiJson<
-    Array<{
-      symbol: string;
-      tabdealSymbol: string;
-      status: string;
-      baseAsset: string;
-      quoteAsset: string;
-    }>
-  >("/r/api/v1/exchangeInfo/");
 
-  const data = raw
-    .filter((m) => m.status === "TRADING")
+  const raw = await apiJson<RawMarket[] | { data?: RawMarket[]; symbols?: RawMarket[] }>(
+    "/r/api/v1/exchangeInfo/",
+  );
+  const rows = Array.isArray(raw) ? raw : (raw.data ?? raw.symbols ?? []);
+  const data = rows
+    .filter((m) => !m.status || m.status === "TRADING")
     .map((m) => ({
       symbol: m.symbol,
       tabdealSymbol: m.tabdealSymbol,
@@ -84,11 +105,45 @@ export async function getHistory(
   const qs = `symbol=${encodeURIComponent(tabdealSymbol)}&resolution=${encodeURIComponent(
     resolution,
   )}&from=${Math.floor(fromSec)}&to=${Math.floor(toSec)}`;
+
   try {
-    const json = await apiJson<{ data?: Candle[]; no_data?: boolean }>(
+    const json = await apiJson<{ data?: Candle[] | (string | number)[][]; no_data?: boolean }>(
       `/r/plots/history/?${qs}`,
     );
-    return Array.isArray(json.data) ? json.data : [];
+    if (!Array.isArray(json.data)) return [];
+
+    return json.data
+      .map((c) => {
+        if (Array.isArray(c)) {
+          const [time, open, high, low, close, volume] = c;
+          return {
+            time: Number(time),
+            open: Number(open),
+            high: Number(high),
+            low: Number(low),
+            close: Number(close),
+            volume: Number(volume),
+          };
+        }
+        return {
+          time: Number(c.time),
+          open: Number(c.open),
+          high: Number(c.high),
+          low: Number(c.low),
+          close: Number(c.close),
+          volume: Number(c.volume),
+        };
+      })
+      .filter(
+        (c) =>
+          Number.isFinite(c.time) &&
+          Number.isFinite(c.open) &&
+          Number.isFinite(c.high) &&
+          Number.isFinite(c.low) &&
+          Number.isFinite(c.close) &&
+          Number.isFinite(c.volume),
+      )
+      .sort((a, b) => a.time - b.time);
   } catch {
     return [];
   }
@@ -111,8 +166,8 @@ async function mapLimit<T, R>(
   return out;
 }
 
-/** Markets are fetched in chunks to stay inside per-request subrequest limits. */
-export const CHUNK_SIZE = 350;
+// Keep serverless invocations small; the UI can request several chunks.
+export const CHUNK_SIZE = 20;
 
 export async function getChunkCount(): Promise<{ parts: number; total: number }> {
   const markets = await getMarkets();
@@ -132,6 +187,7 @@ function statsFromCandles(info: MarketInfo, candles: Candle[]): MarketStat {
       spark: [],
     };
   }
+
   const first = candles[0]!;
   const last = candles[candles.length - 1]!;
   const price = last.close;
@@ -139,6 +195,7 @@ function statsFromCandles(info: MarketInfo, candles: Candle[]): MarketStat {
   const high24 = Math.max(...candles.map((c) => c.high));
   const low24 = Math.min(...candles.map((c) => c.low));
   const volume24 = candles.reduce((sum, c) => sum + (c.volume || 0), 0);
+
   return {
     ...info,
     price,
@@ -177,7 +234,7 @@ export async function getMarketChunk(part: number): Promise<{
 
   const now = Math.floor(Date.now() / 1000);
   const from = now - 26 * 3600;
-  const stats = await mapLimit(slice, 25, async (info) => {
+  const stats = await mapLimit(slice, 6, async (info) => {
     const candles = await getHistory(info.tabdealSymbol, "60", from, now);
     return statsFromCandles(info, candles);
   });
